@@ -1,0 +1,324 @@
+---
+title: "Simulador de remuneração"
+output: html_document
+params:
+  vendedor: "Vendedor 1"
+  mediavol: TRUE
+  vol: 10
+  dep: "SN"
+  unidade: "UNIDADE 1"
+  rentab: !r NA
+  fat: !r NA
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(flexdashboard)
+library(tidyverse)
+library(gt)
+# Install thematic and un-comment for themed static plots (i.e., ggplot2)
+# thematic::thematic_rmd()
+
+DIRETORIO <- "B:/R/previsão de rem. vendedor - amostra/previsão de rem. vendedor - amostra"
+exib           <- readRDS(paste0(DIRETORIO,"/data/data_dash.rds"))
+dados          <- readRDS(paste0(DIRETORIO,"/data/data.rds"))
+dim_unidades   <- readRDS(paste0(DIRETORIO,"/data/dim_unidades.rds"))
+
+marca_param <- dim_unidades$marca[
+  match(params$unidade, dim_unidades$unidade)
+]
+
+lojas <- dados %>% 
+  select(dep,marca, unidade, cidade) %>% 
+  distinct()
+
+dados <- dados %>% filter(vendedor == params$vendedor)
+
+exib  <- exib %>% filter(vendedor == params$vendedor) %>% tail(6) %>% 
+  select(
+    mes_do_pagamento, dep, unidade, vendedor,
+    fat_liq_total, rentab, vol, ajustes_de_negociacao,
+    premio_total, comissao, dsr, compl_normativo, remun_total
+  ) %>%
+  setNames(c(
+    "Pagamento", "Dep.", "Unidade", "Vendedor",
+    "Faturamento", "Rentabilidade", "Volume", "Ajustes GM",
+    "Prêmio total", "Comissão", "DSR", "Complemento", "Total"
+  )) %>% 
+   mutate(
+    Pagamento = format(Pagamento, "%B/%Y")
+    
+  )
+
+
+volmedio <- mean(as.numeric(exib$Volume))
+
+usar_media <- identical(params$mediavol, TRUE)
+
+
+source("predict function - A.R")
+
+if (usar_media) {
+
+  obj <- predict_remuneracao_opc(
+    departamento   = params$dep,
+    unidade        = params$unidade,
+    volume         = volmedio,
+    rentabilidade = params$rentab,
+    faturamento   = params$fat
+  )
+
+} else {
+
+  obj <- predict_remuneracao_opc(
+    departamento   = params$dep,
+    unidade        = params$unidade,
+    volume         = params$vol,
+    rentabilidade = params$rentab,
+    faturamento   = params$fat
+  )
+
+}
+
+```
+
+## Resumo dos ultimos pagamentos
+
+Vendedor: `r params$vendedor`
+
+```{r resumo dos ultimos 6 meses, echo=FALSE}
+
+
+dados %>% 
+  tail(6) %>% 
+  select(
+    mes_do_pagamento, dep, unidade, vendedor,
+    fat_liq_total, rentab, vol, ajustes_de_negociacao,
+    premio_total, comissao, dsr, compl_normativo, remun_total
+  ) %>%
+  setNames(c(
+    "Pagamento", "Dep.", "Unidade", "Vendedor",
+    "Faturamento", "Rentabilidade", "Volume", "Ajustes GM",
+    "Prêmio total", "Comissão", "DSR", "Complemento", "Total")) %>% 
+  mutate(
+    Faturamento = as.numeric(Faturamento),
+    Rentabilidade = as.numeric(Rentabilidade),
+    Volume = as.numeric(Volume),
+    `Prêmio total` = as.numeric(`Prêmio total`),
+    Comissão = as.numeric(Comissão), 
+    DSR = as.numeric(DSR),
+    Complemento = as.numeric(Complemento),
+    Total = as.numeric(Total)
+  ) %>% 
+  summarise(
+    Faturamento = round(mean(Faturamento)),
+    Volume = round(mean(Volume)),
+    Rentabilidade = round(mean(Rentabilidade)),
+    Prêmio = round(mean(`Prêmio total`)),
+    Comissão = round(mean(Comissão)), 
+    DSR = round(mean(DSR)),
+    Total = round(mean(Total))
+  ) %>% 
+  mutate(
+    Faturamento = prettyNum(Faturamento, big.mark = ".", decimal.mark = ","),
+    Rentabilidade = prettyNum(Rentabilidade, big.mark = ".", decimal.mark = ","),
+    Prêmio = paste0("R$ ", prettyNum(Prêmio, big.mark = ".", decimal.mark = ",")),
+    Comissão =  paste0("R$ ",prettyNum(Comissão, big.mark = ".", decimal.mark = ",")),
+    DSR =  paste0("R$ ",prettyNum(DSR, big.mark = ".", decimal.mark = ",")),
+    Total = paste0("R$ " ,prettyNum(Total, big.mark = ".", decimal.mark = ","))
+  ) %>% 
+  
+  gt( caption = "Média dos ultimos 6 meses")
+    
+  
+
+```
+
+
+## Simulação na loja de destino
+
+### Resultados
+
+
+```{r tabela de resultados predict, echo = FALSE, warning=FALSE}
+
+data.frame(
+
+  "Departamento" = obj$inputs_utilizados$departamento,
+  "Unidade" = obj$inputs_utilizados$unidade,
+  "Volume" = round(obj$inputs_utilizados$volume,0),
+  "Faturamento" = formatC(obj$inputs_utilizados$faturamento, format = "f", digits = 0, big.mark = "."),
+  "Rentabilidade" = formatC(obj$inputs_utilizados$rentabilidade, format = "f", digits = 0, big.mark = "."),
+  "Remuneração estimada" = paste0(
+  "R$ ",
+  formatC(
+    obj$remuneracao_prevista,
+    format = "f",
+    digits = 0,
+    big.mark = ".",
+    decimal.mark = ","
+  )
+) 
+  ) %>% 
+  gt() 
+
+```
+
+
+<small><em>Estes valores são simulações e não levam em consideração o potêncial da campanha vigênte neste mês, mas o histórico da produção do vendedor analisado junto ao histórico do ultimo ano dos vendedores desta loja.</em></small>
+
+### Comparativo
+
+```{r Teste de hip, echo=FALSE, message=FALSE, warning=FALSE}
+media <- mean(dados$remun_total, na.rm = TRUE)
+
+cor_target <- ifelse(
+  obj$remuneracao_prevista < media - 500,
+  "#D32F2F",  # vermelho
+  "#2E7D32"   # verde
+)
+
+dens <- density(dados$remun_total, na.rm = TRUE)
+
+dens_df <- tibble(
+  x = dens$x,
+  y = dens$y
+)
+
+ggplot(dens_df, aes(x, y)) +
+  
+  # área preenchida até o TARGET
+  geom_area(
+    data = dens_df %>% filter(x <= obj$remuneracao_prevista),
+    fill = cor_target,
+    alpha = 0.5
+  ) +
+  
+  # curva completa
+  geom_line(color = "black", linewidth = 1) +
+  
+  # linha vertical do TARGET
+  geom_vline(
+    xintercept = obj$remuneracao_prevista,
+    linetype = "dashed",
+    linewidth = 0.8
+  ) +
+  
+    annotate(
+    "text",
+    x = obj$remuneracao_prevista + 500,
+    y = max(dens_df$y) * 0.95,
+    label = "VALOR SIMULADO",
+    color = cor_target,
+    hjust = -0.1,
+    vjust = 1,
+    fontface = "bold",
+    size = 4
+  ) +
+  
+  scale_x_continuous(
+    limits = c(0, 1.5 * max(dados$remun_total, na.rm = TRUE))
+  ) +
+  
+  labs(x = "Remuneração", y = NULL) +
+  
+  theme_minimal() +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid   = element_blank(),
+    panel.background = element_blank()
+  )
+```
+
+Este gráfico de densidade demonstra o histórico do ganho do `r params$vendedor`, a linha tracejada é onde a remuneração estimada se encontra.
+
+Se a estimativa for maior do a média, a área abaixo do gráfico ficará verde e a movimentação é considerada segura.
+
+Se a estimativa for menor do que a média, a área abaixo ficará vermelha, indicando uma provável baixa na base de ganho.
+
+Consideramos um erro padrão de R$ 1.000 reais.
+
+# Simulação nas demais lojas
+
+Consideramos as lojas na mesma cidade que você pretende movimentar o colaborador para o mesmo departamento, caso haja interesse em alguma loja abaixo, retire um novo relatório para mais informações
+
+```{r, echo = FALSE}
+cidade_alvo <- lojas %>% filter( unidade == params$unidade, dep == params$dep) %>% select(cidade) %>% pull()
+
+
+Unidades_filtradas <- lojas %>% filter(cidade == cidade_alvo, dep == params$dep) %>% select(unidade)
+                  
+
+
+library(dplyr)
+library(purrr)
+library(purrr)
+
+predict_safe <- safely(predict_remuneracao_opc)
+
+
+tabela_simulada <- Unidades_filtradas %>% 
+  rename(UNIDADE = "unidade") %>% 
+  mutate(
+    resultado = map(
+      UNIDADE,
+      ~predict_safe(
+        departamento  = params$dep,
+        unidade       = .x,
+        volume        = if (usar_media) volmedio else params$vol,
+        rentabilidade = params$rentab,
+        faturamento   = params$fat
+      )
+    ),
+    
+    SALARIO = map_dbl(resultado, ~{
+      if (is.null(.x$result)) NA_real_
+      else .x$result$remuneracao_prevista
+    }),
+    
+    ERRO = map_chr(resultado, ~{
+      if (is.null(.x$error)) NA_character_
+      else as.character(.x$error$message)
+    }),
+    
+    indicador = ifelse(SALARIO >= media, 1, 0)
+  ) %>% 
+  mutate(CIDADE = cidade_alvo, DEPARTAMENTO = params$dep) %>% 
+  select(CIDADE, DEPARTAMENTO,
+         UNIDADE, SALARIO, indicador) %>% 
+  arrange(desc(SALARIO)) %>% 
+  mutate(
+    SALARIO = ifelse(
+      is.na(SALARIO),
+      "ERRO",
+      paste0("R$ ", prettyNum(round(SALARIO), big.mark = ".", decimal.mark = ","))
+    )
+  )
+
+    
+tabela_simulada %>% 
+  gt() %>% 
+  tab_style(
+    style = cell_fill(color = "green"),
+    locations = cells_body(
+      columns = SALARIO,
+      rows = indicador == 1
+    )
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "red"),
+    locations = cells_body(
+      columns = SALARIO,
+      rows = indicador == 0
+    )
+  ) %>% 
+  cols_hide(columns = indicador)
+  
+    
+```
+
+
